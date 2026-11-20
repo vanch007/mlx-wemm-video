@@ -172,10 +172,12 @@ def stream_generate(
     generated_ids: List[int] = []
     prev_text = ""
     t_gen = time.time()
+    finish_reason = "length"
 
     for step in range(max_tokens):
         tok_id = int(next_tok.item())
         if tok_id in eos_ids:
+            finish_reason = "stop"
             break
         generated_ids.append(tok_id)
         full_text = processor.tokenizer.decode(generated_ids, skip_special_tokens=True)
@@ -193,10 +195,25 @@ def stream_generate(
             "encode_sec": encode_sec,
             "prefill_sec": prefill_sec,
             "decode_tps": len(generated_ids) / max(1e-6, time.time() - t_gen),
+            "finish_reason": None,
         }
         out = model.language_model(next_tok[:, None], cache=cache)
         next_tok = _sample_next_token(out.logits[:, -1, :], temperature=temperature, top_p=top_p)
         mx.eval(next_tok)
+
+    # Flush any buffered trailing text and report final finish_reason
+    final_text = processor.tokenizer.decode(generated_ids, skip_special_tokens=True)
+    tail_delta = final_text[len(prev_text) :]
+    yield {
+        "text": tail_delta,
+        "token_id": None,
+        "prompt_tokens": prompt_tokens,
+        "generated_tokens": len(generated_ids),
+        "encode_sec": encode_sec,
+        "prefill_sec": prefill_sec,
+        "decode_tps": len(generated_ids) / max(1e-6, time.time() - t_gen),
+        "finish_reason": finish_reason,
+    }
 
 
 def main():

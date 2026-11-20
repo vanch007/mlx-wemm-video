@@ -623,3 +623,78 @@ def preprocess_frames_to_patches(
     )
     grid_thw = np.array([[grid_t, grid_h, grid_w]], dtype=np.int64)
     return flatten_patches.astype(np.float32), grid_thw
+
+
+def detect_video_shots(
+    video_path: str | Path,
+    *,
+    min_shot_sec: float = 0.8,
+    bhat_threshold: float = 0.28,
+    mad_threshold: float = 0.035,
+    strong_bhat_threshold: float = 0.38,
+) -> Tuple[List[Tuple[float, float]], float]:
+    """Detect hard shot cuts using letterbox-cropped 2x2 spatial HSV histograms + luminance MAD.
+
+    Returns (shots, duration_sec) where shots is a list of (start_sec, end_sec) tuples.
+    """
+    import cv2
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Failed to open video for shot detection: {video_path}")
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 24.0)
+
+    def _sig(frame: np.ndarray):
+        small = cv2.resize(frame, (160, 90))
+        # Exclude top/bottom letterbox bars when computing dark-scene cut scores
+        crop = small[12:78, :]
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        ch, cw, _ = hsv.shape
+        hists = []
+        for r in (0, ch // 2):
+            for c in (0, cw // 2):
+                cell = hsv[r : r + ch // 2, c : c + cw // 2]
+                hi = cv2.calcHist([cell], [0, 1, 2], None, [8, 8, 8], [0, 180, 0, 256, 0, 256])
+                cv2.normalize(hi, hi)
+                hists.append(hi)
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+        return hists, gray
+
+    prev = None
+    diffs: List[Tuple[float, float, float]] = []
+    idx = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        sig = _sig(frame)
+        if prev is not None:
+            bhat = float(
+                np.mean([cv2.compareHist(a, b, cv2.HISTCMP_BHATTACHARYYA) for a, b in zip(prev[0], sig[0])])
+            )
+            mad = float(np.mean(np.abs(sig[1] - prev[1])))
+            diffs.append((idx / fps, bhat, mad))
+        prev = sig
+        idx += 1
+    cap.release()
+
+    duration = idx / fps if fps > 0 else 0.0
+    if not diffs:
+        return [(0.0, duration)], duration
+
+    bhats = np.array([d[1] for d in diffs], dtype=np.float32)
+    mads = np.array([d[2] for d in diffs], dtype=np.float32)
+    cuts = [0.0]
+    for i, (t, b, m) in enumerate(diffs):
+        lo = max(0, i - 8)
+        hi = min(len(diffs), i + 9)
+        med_b = float(np.median(bhats[lo:hi]))
+        med_m = float(np.median(mads[lo:hi]))
+        is_cut = (b > max(bhat_threshold, med_b * 2.2) and m > max(mad_threshold, med_m * 2.0)) or (
+            b > strong_bhat_threshold
+        )
+        if is_cut and (t - cuts[-1] >= min_shot_sec) and (duration - t >= 0.4):
+            cuts.append(t)
+    cuts.append(duration)
+    shots = [(cuts[i], cuts[i + 1]) for i in range(len(cuts) - 1)]
+    return shots, duration
