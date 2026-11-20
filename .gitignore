@@ -10,3 +10,4 @@ models/
 scripts/download_worker.py
 scripts/test_local_videos.py
 scripts/run_after_download.sh
+scripts/upload_hf_models.py
