@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mlx-wemm-video"
+version = "0.1.0"
+description = "Apple Silicon MLX port of Tencent/WeMM-Video (35B-A3B MoE and dense variants) with oMLX compatibility"
+requires-python = ">=3.11"
+dependencies = [
+    "mlx>=0.30.0",
+    "mlx-vlm>=0.4.0",
+    "mlx-lm>=0.30.0",
+    "transformers>=4.57.0",
+    "numpy>=1.26.0",
+    "scipy>=1.11.0",
+    "soundfile>=0.12.0",
+    "pillow>=10.0.0",
+    "safetensors>=0.4.0",
+    "huggingface-hub>=0.30.0",
+]
+
+[project.scripts]
+mlx-wemm-convert = "mlx_wemm_video.convert:main"
+mlx-wemm-generate = "mlx_wemm_video.generate:main"
+
+[tool.setuptools.packages.find]
+include = ["mlx_wemm_video*", "omlx_compat*"]

@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+outputs/
+models/
+.DS_Store
+scripts/download_worker.py
+scripts/test_local_videos.py
+scripts/run_after_download.sh
