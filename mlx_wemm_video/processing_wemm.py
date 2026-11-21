@@ -31,14 +31,24 @@ from .media import (
 class _SimpleImageProcessorMeta:
     """Minimal metadata shim expected by mlx-vlm and oMLX boundary helpers."""
 
-    def __init__(self, patch_size=16, temporal_patch_size=2, merge_size=2, min_pixels=65536, max_pixels=16777216):
+    def __init__(self, patch_size=16, temporal_patch_size=2, merge_size=2, min_pixels=65536, max_pixels=16777216, fps=2.0, min_frames=4, max_frames=128):
         self.patch_size = patch_size
         self.temporal_patch_size = temporal_patch_size
         self.merge_size = merge_size
+        self.min_pixels = min_pixels
+        self.max_pixels = max_pixels
+        self.fps = fps
+        self.min_frames = min_frames
+        self.max_frames = max_frames
         self.size = {"shortest_edge": min_pixels, "longest_edge": max_pixels}
         self.image_mean = (0.5, 0.5, 0.5)
         self.image_std = (0.5, 0.5, 0.5)
         self.model_input_names = ["pixel_values", "image_grid_thw"]
+
+    def preprocess(self, images, **kwargs):
+        if isinstance(images, (list, tuple)):
+            return [load_image(im) for im in images]
+        return load_image(images)
 
 
 class WeMMProcessor(ProcessorMixin):
@@ -117,6 +127,9 @@ class WeMMProcessor(ProcessorMixin):
             merge_size=merge_size,
             min_pixels=min_pixels,
             max_pixels=total_pixels,
+            fps=fps,
+            min_frames=min_frames,
+            max_frames=max_frames,
         )
 
     @classmethod

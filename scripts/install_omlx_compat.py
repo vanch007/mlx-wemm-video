@@ -7,34 +7,39 @@ import argparse
 from pathlib import Path
 
 DEFAULT_OMLX_SITE = Path(
+    "/Applications/oMLX.app/Contents/Resources/Python/cpython-3.11/lib/python3.11/site-packages"
+)
+LEGACY_OMLX_SITE = Path(
     "/Applications/oMLX.app/Contents/Resources/Python/framework-mlx-base/lib/python3.11/site-packages"
 )
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def install(site_dir: Path, dry_run: bool = False) -> None:
-    if not site_dir.is_dir():
-        raise FileNotFoundError(f"oMLX site-packages directory not found: {site_dir}")
-
-    pth_file = site_dir / "mlx_wemm_video_omlx.pth"
     pth_content = (
         f"{REPO_ROOT}\n"
         "import omlx_compat; omlx_compat.apply_mlx_vlm_wemm_compat_patch()\n"
     )
-    if dry_run:
-        print(f"[DRY RUN] Would write {pth_file}:\n{pth_content}")
-        return
-    pth_file.write_text(pth_content, encoding="utf-8")
-    print(f"Installed oMLX compatibility hook -> {pth_file}")
+    targets = [site_dir]
+    if site_dir == DEFAULT_OMLX_SITE and LEGACY_OMLX_SITE.is_dir():
+        targets.append(LEGACY_OMLX_SITE)
+    for target in targets:
+        if not target.is_dir():
+            raise FileNotFoundError(f"oMLX site-packages directory not found: {target}")
+        pth_file = target / "mlx_wemm_video_omlx.pth"
+        if dry_run:
+            print(f"[DRY RUN] Would write {pth_file}:\n{pth_content}")
+        else:
+            pth_file.write_text(pth_content, encoding="utf-8")
+            print(f"Installed oMLX compatibility hook -> {pth_file}")
 
 
 def uninstall(site_dir: Path) -> None:
-    pth_file = site_dir / "mlx_wemm_video_omlx.pth"
-    if pth_file.exists():
-        pth_file.unlink()
-        print(f"Removed {pth_file}")
-    else:
-        print(f"Nothing to remove at {pth_file}")
+    for target in (site_dir, LEGACY_OMLX_SITE):
+        pth_file = target / "mlx_wemm_video_omlx.pth"
+        if pth_file.exists():
+            pth_file.unlink()
+            print(f"Removed {pth_file}")
 
 
 def main():

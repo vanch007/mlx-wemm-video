@@ -65,7 +65,25 @@ def apply_mlx_vlm_wemm_compat_patch() -> bool:
         # 4. Register torch-free WeMMProcessor on AutoProcessor
         install_auto_processor_patch(list(_MODEL_TYPES), wemm_proc.WeMMProcessor)
 
-        # 5. If running inside oMLX, enable native video path for wemm_qwen3_5_moe
+        # 5. If running inside oMLX, wire model discovery, Qwen vision sets, and native video support
+        try:
+            import omlx.model_discovery as omlx_disc
+
+            if hasattr(omlx_disc, "VLM_MODEL_TYPES") and isinstance(omlx_disc.VLM_MODEL_TYPES, set):
+                omlx_disc.VLM_MODEL_TYPES.update(_MODEL_TYPES)
+        except Exception:
+            pass
+
+        try:
+            import omlx.engine.vlm as omlx_vlm
+
+            if hasattr(omlx_vlm, "_QWEN_VISION_MODELS") and isinstance(omlx_vlm._QWEN_VISION_MODELS, set):
+                omlx_vlm._QWEN_VISION_MODELS.update(_MODEL_TYPES)
+            if hasattr(omlx_vlm, "_GRID_VISION_MODELS") and isinstance(omlx_vlm._GRID_VISION_MODELS, set):
+                omlx_vlm._GRID_VISION_MODELS.update(_MODEL_TYPES)
+        except Exception:
+            pass
+
         try:
             import omlx.utils.video as omlx_video
 
@@ -73,6 +91,19 @@ def apply_mlx_vlm_wemm_compat_patch() -> bool:
                 omlx_video.NATIVE_VIDEO_MODEL_TYPES = frozenset(
                     set(omlx_video.NATIVE_VIDEO_MODEL_TYPES) | set(_MODEL_TYPES)
                 )
+            orig_attach = getattr(omlx_video, "attach_native_video_processor", None)
+            if callable(orig_attach) and not getattr(orig_attach, "_wemm_patched", False):
+                def _patched_attach(processor, model_path=None):
+                    if isinstance(processor, wemm_proc.WeMMProcessor):
+                        return True
+                    return orig_attach(processor, model_path)
+                _patched_attach._wemm_patched = True
+                omlx_video.attach_native_video_processor = _patched_attach
+                try:
+                    import omlx.engine.vlm as omlx_vlm
+                    omlx_vlm.attach_native_video_processor = _patched_attach
+                except Exception:
+                    pass
         except Exception:
             pass
     except Exception as exc:  # noqa: BLE001
