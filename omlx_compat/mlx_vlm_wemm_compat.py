@@ -65,6 +65,30 @@ def apply_mlx_vlm_wemm_compat_patch() -> bool:
         # 4. Register torch-free WeMMProcessor on AutoProcessor
         install_auto_processor_patch(list(_MODEL_TYPES), wemm_proc.WeMMProcessor)
 
+        # Wrap mlx_vlm.utils.prepare_inputs so WeMMProcessor also receives the
+        # original video file paths before prepare_inputs decodes them to frames,
+        # enabling automatic omni-modal video+audio track extraction in oMLX.
+        orig_prepare = getattr(vlm_utils, "prepare_inputs", None)
+        if callable(orig_prepare) and not getattr(orig_prepare, "_wemm_patched", False):
+            def _patched_prepare_inputs(processor, *args, **kwargs):
+                if isinstance(processor, wemm_proc.WeMMProcessor):
+                    vids = kwargs.get("videos")
+                    if vids is not None:
+                        vlist = vids if isinstance(vids, list) else [vids]
+                        processor._recent_video_paths = [
+                            str(v) for v in vlist if isinstance(v, (str, bytes)) or hasattr(v, "__fspath__")
+                        ]
+                return orig_prepare(processor, *args, **kwargs)
+
+            _patched_prepare_inputs._wemm_patched = True
+            vlm_utils.prepare_inputs = _patched_prepare_inputs
+            try:
+                import omlx.engine.vlm as omlx_vlm
+                if hasattr(omlx_vlm, "prepare_inputs"):
+                    omlx_vlm.prepare_inputs = _patched_prepare_inputs
+            except Exception:
+                pass
+
         # 5. If running inside oMLX, wire model discovery, Qwen vision sets, and native video support
         try:
             import omlx.model_discovery as omlx_disc
@@ -81,6 +105,10 @@ def apply_mlx_vlm_wemm_compat_patch() -> bool:
                 omlx_vlm._QWEN_VISION_MODELS.update(_MODEL_TYPES)
             if hasattr(omlx_vlm, "_GRID_VISION_MODELS") and isinstance(omlx_vlm._GRID_VISION_MODELS, set):
                 omlx_vlm._GRID_VISION_MODELS.update(_MODEL_TYPES)
+            if hasattr(omlx_vlm, "NATIVE_VIDEO_MODEL_TYPES"):
+                omlx_vlm.NATIVE_VIDEO_MODEL_TYPES = frozenset(
+                    set(omlx_vlm.NATIVE_VIDEO_MODEL_TYPES) | set(_MODEL_TYPES)
+                )
         except Exception:
             pass
 

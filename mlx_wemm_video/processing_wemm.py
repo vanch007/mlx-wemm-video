@@ -103,6 +103,7 @@ class WeMMProcessor(ProcessorMixin):
         self.merge_size = int(merge_size)
         self.system_prompt = system_prompt
         self.timestamp_interval_sec = float(timestamp_interval_sec)
+        self._recent_video_paths: List[str] = []
 
         self.image_token = "<|image_pad|>"
         self.video_token = "<|video_pad|>"
@@ -142,6 +143,15 @@ class WeMMProcessor(ProcessorMixin):
         jinja_path = model_dir / "chat_template.jinja"
         if jinja_path.is_file():
             tokenizer.chat_template = jinja_path.read_text(encoding="utf-8")
+        if getattr(tokenizer, "chat_template", None) and "<|audio_start|><|audio_pad|><|audio_end|>" not in tokenizer.chat_template:
+            tokenizer.chat_template = tokenizer.chat_template.replace(
+                "{{- '<|vision_start|><|video_pad|><|vision_end|>' }}\n            {%- elif 'text' in item %}",
+                "{{- '<|vision_start|><|video_pad|><|vision_end|>' }}\n"
+                "            {%- elif 'audio' in item or 'audio_url' in item or 'input_audio' in item or item.type == 'audio' %}\n"
+                "                {{- '<|audio_start|><|audio_pad|><|audio_end|>' }}\n"
+                "            {%- elif 'text' in item %}",
+                1,
+            )
 
         cfg = {}
         cfg_path = model_dir / "config.json"
@@ -261,9 +271,8 @@ class WeMMProcessor(ProcessorMixin):
                     elif kind in ("image", "video", "audio", "video_audio"):
                         key = "video" if kind == "video_audio" else kind
                         src = item.get(key, item.get("path"))
-                        if src is None:
-                            raise ValueError(f"Missing {key} or path in media item")
-                        routes.append({**item, "type": kind, "source": src})
+                        if src is not None:
+                            routes.append({**item, "type": kind, "source": src})
                         marker = {
                             "image": IMAGE_MARKER,
                             "video": VIDEO_MARKER,
@@ -427,6 +436,16 @@ class WeMMProcessor(ProcessorMixin):
                     min_frames=eff_min,
                     max_frames=eff_max,
                 )
+                ext_meta = route.get("video_metadata")
+                if ext_meta is not None:
+                    if isinstance(ext_meta, dict):
+                        for mk in ("total_num_frames", "fps", "frames_indices", "duration"):
+                            if ext_meta.get(mk) is not None:
+                                vid_info[mk] = ext_meta[mk]
+                    else:
+                        for mk in ("total_num_frames", "fps", "frames_indices", "duration"):
+                            if getattr(ext_meta, mk, None) is not None:
+                                vid_info[mk] = getattr(ext_meta, mk)
                 bundled_audio = vid_info.pop("audio_bytes", None)
                 pix, grid = preprocess_frames_to_patches(
                     frames,
@@ -443,6 +462,8 @@ class WeMMProcessor(ProcessorMixin):
                 audio_count, audio_duration = 0, None
                 if kind == "video_audio" or bundled_audio is not None:
                     audio_src = route.get("audio", bundled_audio if bundled_audio is not None else source)
+                    if isinstance(audio_src, np.ndarray) and route.get("audio_path"):
+                        audio_src = route["audio_path"]
                     try:
                         samples = decode_audio(audio_src)
                     except (RuntimeError, ValueError):
@@ -532,7 +553,7 @@ class WeMMProcessor(ProcessorMixin):
         audio=None,
         audios=None,
         messages=None,
-        use_audio_in_video: bool = False,
+        use_audio_in_video: bool = True,
         fps: Optional[float] = None,
         video_metadata=None,
         **kwargs,
@@ -563,13 +584,20 @@ class WeMMProcessor(ProcessorMixin):
         audio_list = audios if audios is not None else audio
         if videos is not None:
             vid_list = videos if isinstance(videos, list) else [videos]
+            meta_list = video_metadata if isinstance(video_metadata, (list, tuple)) else ([video_metadata] * len(vid_list) if video_metadata is not None else [None] * len(vid_list))
+            recent_paths = list(self._recent_video_paths)
+            self._recent_video_paths.clear()
             for idx, vid in enumerate(vid_list):
                 entry: Dict[str, Any] = {
                     "type": "video_audio" if use_audio_in_video else "video",
                     "source": vid,
                 }
+                if isinstance(vid, np.ndarray) and idx < len(recent_paths):
+                    entry["audio_path"] = recent_paths[idx]
                 if fps is not None:
                     entry["fps"] = fps[idx] if isinstance(fps, (list, tuple)) else fps
+                if idx < len(meta_list) and meta_list[idx] is not None:
+                    entry["video_metadata"] = meta_list[idx]
                 routes.append(entry)
 
         if audio_list is not None:

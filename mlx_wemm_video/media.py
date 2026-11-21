@@ -386,6 +386,8 @@ def decode_video(
     source = resolve_media(source)
     if isinstance(source, np.ndarray):
         arr = source
+        if arr.ndim == 4 and arr.shape[1] == 3 and arr.shape[-1] != 3:
+            arr = np.transpose(arr, (0, 2, 3, 1))
         if arr.dtype != np.uint8:
             arr = np.clip(arr * 255.0 if arr.max() <= 1.0 else arr, 0, 255).astype(np.uint8)
         n = len(arr)
@@ -574,6 +576,8 @@ def preprocess_frames_to_patches(
     """Torch-free Qwen3-VL / WeMM patchifier for images (1 frame) or videos (T frames)."""
     if frames.ndim == 3:
         frames = frames[None, ...]
+    if frames.ndim == 4 and frames.shape[1] == 3 and frames.shape[-1] != 3:
+        frames = np.transpose(frames, (0, 2, 3, 1))
     num_frames, height, width, _ = frames.shape
     factor = patch_size * merge_size
     per_frame_max = max(min_pixels, max_pixels // max(1, num_frames)) if is_video else max_pixels
